@@ -62,10 +62,9 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   const document = vscode.window.activeTextEditor?.document;
-  if (document) {
-    const otOps = readOTFile(document);
-    panel.webview.html = getWebviewContent(otOps.length);
-  }
+  panel.webview.html = getWebviewContent(
+    document ? readOTFile(document).length : 0
+  );
 
   // Handle messages from the Webview
   panel.webview.onDidReceiveMessage((message) => {
@@ -202,7 +201,7 @@ function hash(str: string) {
   return hash;
 }
 
-function getWebviewContent(maxValue: number) {
+function getWebviewContent(maxValue: number, content: string = '') {
   return `
   <!DOCTYPE html>
   <html>
@@ -219,13 +218,14 @@ function getWebviewContent(maxValue: number) {
         max="${maxValue}"
         value="${maxValue}"
       />
-      <span id="ot-value">${maxValue} / ${maxValue}</span>
+      <span id="ot-value" value=${maxValue}>${maxValue} / ${maxValue}</span>
       <br />
-      <span id="ot-content"></span>
+      <span id="ot-content">${content}</span>
       <script>
         const maxValue = ${maxValue};
         const slider = document.getElementById('ot-slider');
         const content = document.getElementById('ot-content');
+        const otValue = document.getElementById('ot-value');
         const vscode = acquireVsCodeApi();
 
         slider.addEventListener('input', (event) => {
@@ -234,7 +234,6 @@ function getWebviewContent(maxValue: number) {
             value: parseInt(event.target.value),
           });
 
-          const otValue = document.getElementById('ot-value');
           otValue.innerText = slider.value + ' / ' + maxValue;
         });
 
@@ -243,8 +242,7 @@ function getWebviewContent(maxValue: number) {
           switch (message.type) {
             case 'updateMax':
               slider.max = message.maxValue;
-              const otValue = document.getElementById('ot-value');
-              otValue.innerText = slider.value + ' / ' + slider.max;
+              otValue.innerText = slider.value + ' / ' + message.maxValue;
               break;
             case 'updateContent':
               content.innerText = message.text;
