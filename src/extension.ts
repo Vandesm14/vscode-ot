@@ -7,7 +7,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const rootFolder = vscode.workspace.workspaceFolders;
   if (!rootFolder) {
     vscode.window.showErrorMessage(
-      'Boop REPL: No workspace folder found. Please open a folder first.'
+      'VSCode OT: No workspace folder found. Please open a folder first.'
     );
     return;
   }
@@ -19,7 +19,7 @@ export async function activate(context: vscode.ExtensionContext) {
   try {
     await vscode.workspace.fs.stat(otFolder);
   } catch {
-    console.log('Creating .boop folder');
+    console.log('Creating .ot folder');
 
     await vscode.workspace.fs.createDirectory(otFolder);
   }
@@ -173,8 +173,6 @@ export async function activate(context: vscode.ExtensionContext) {
       otFolder.fsPath,
       hash(document.fileName).toString() + '.ot.json'
     );
-
-    console.log({ otPath });
 
     return otPath;
   }
