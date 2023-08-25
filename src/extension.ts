@@ -1,20 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-
-type InsertOp = {
-  operation: 'insert';
-  position: number;
-  text: string;
-};
-
-type DeleteOp = {
-  operation: 'delete';
-  start: number;
-  end: number;
-};
-
-type OtOp = InsertOp | DeleteOp;
+import * as ot from './ot';
 
 export async function activate(context: vscode.ExtensionContext) {
   const rootFolder = vscode.workspace.workspaceFolders;
@@ -28,7 +15,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const rootUri = rootFolder[0].uri;
   const otFolder = vscode.Uri.joinPath(rootUri, '.ot');
 
-  // check if .boop/ folder exists
+  // check if .ot/ folder exists
   try {
     await vscode.workspace.fs.stat(otFolder);
   } catch {
@@ -39,20 +26,30 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // TODO: When the file is changed, we need to update the HTML
   let lastOpenDocument = vscode.window.activeTextEditor?.document;
-  // vscode.window.onDidChangeActiveTextEditor((editor) => {
-  //   if (!editor) {
-  //     return;
-  //   }
+  vscode.window.onDidChangeActiveTextEditor((editor) => {
+    if (!editor) {
+      return;
+    }
 
-  //   const document = editor.document;
-  //   if (document === lastOpenDocument) {
-  //     return;
-  //   }
+    const document = editor.document;
+    if (document === lastOpenDocument) {
+      return;
+    }
 
-  //   lastOpenDocument = document;
-  //   const otOps = readOTFile(document);
-  //   panel.webview.html = getWebviewContent(otOps.length);
-  // });
+    lastOpenDocument = document;
+    const otOps = readOTFile(document);
+
+    // Post a message back to the webview to tell the slider what the new content is
+    panel.webview.postMessage({
+      type: 'updateContent',
+      text: ot.buildOT(otOps),
+    });
+
+    panel.webview.postMessage({
+      type: 'updateMax',
+      maxValue: otOps.length,
+    });
+  });
 
   // Create a Webview panel
   const panel = vscode.window.createWebviewPanel(
@@ -82,7 +79,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
       const otOps = readOTFile(document);
       const opsToApply = otOps.slice(0, message.value);
-      const text = buildOT(opsToApply);
+      const text = ot.buildOT(opsToApply);
 
       // const newText = vscode.TextEdit.replace(
       //   new vscode.Range(0, 0, document.lineCount, 0),
@@ -106,7 +103,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
 
     const changes = event.contentChanges;
-    const otOps = changesToOT(changes);
+    const otOps = ot.changesToOT(changes);
 
     // After saving the operations, send a message to the webview to update the slider's max value
     const maxOps = saveToOTFile(event.document, otOps);
@@ -125,7 +122,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
 
     const otOps = readOTFile(document);
-    const text = buildOT(otOps);
+    const text = ot.buildOT(otOps);
     const newText = vscode.TextEdit.replace(
       new vscode.Range(0, 0, document.lineCount, 0),
       text
@@ -144,7 +141,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
 
     const otPath = otFilePath(document);
-    const insertOp: InsertOp = {
+    const insertOp: ot.InsertOp = {
       operation: 'insert',
       position: 0,
       text: document.getText(),
@@ -160,7 +157,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // show info event
   vscode.window.showInformationMessage('VSCode OT is now active');
 
-  function saveToOTFile(document: vscode.TextDocument, ops: OtOp[]): number {
+  function saveToOTFile(document: vscode.TextDocument, ops: ot.OtOp[]): number {
     const otPath = otFilePath(document);
     const existingOps = readOTFile(document);
 
@@ -182,13 +179,13 @@ export async function activate(context: vscode.ExtensionContext) {
     return otPath;
   }
 
-  function readOTFile(document: vscode.TextDocument): OtOp[] {
+  function readOTFile(document: vscode.TextDocument): ot.OtOp[] {
     const otPath = otFilePath(document);
     if (!fs.existsSync(otPath)) {
       return [];
     }
 
-    return JSON.parse(fs.readFileSync(otPath).toString()) as OtOp[];
+    return JSON.parse(fs.readFileSync(otPath).toString()) as ot.OtOp[];
   }
 }
 
@@ -205,70 +202,6 @@ function hash(str: string) {
   }
 
   return hash;
-}
-
-function changesToOT(
-  changes: readonly vscode.TextDocumentContentChangeEvent[]
-): OtOp[] {
-  return changes.flatMap((change) => {
-    const offset = change.rangeOffset;
-    const endOffset = offset + change.rangeLength;
-    if (change.rangeLength > 0 && change.text.length > 0) {
-      // If the change replaces text, we need to delete the old text and insert the new text
-      return [
-        {
-          operation: 'delete',
-          start: offset,
-          end: endOffset,
-        },
-        {
-          operation: 'insert',
-          position: offset,
-          text: change.text,
-        },
-      ];
-    } else if (change.text.length === 0) {
-      // If the change deletes text
-      return {
-        operation: 'delete',
-        start: offset,
-        end: endOffset,
-      };
-    } else {
-      // If the change inserts text
-      return {
-        operation: 'insert',
-        position: offset,
-        text: change.text,
-      };
-    }
-  });
-}
-
-function buildOT(ops: OtOp[]) {
-  return ops.reduce((text, op) => {
-    if (op.operation === 'insert') {
-      return text.slice(0, op.position) + op.text + text.slice(op.position);
-    } else if (op.operation === 'delete') {
-      return text.slice(0, op.start) + text.slice(op.end);
-    }
-
-    return text;
-  }, '');
-}
-
-function equals(a: OtOp, b: OtOp) {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
-function isOppositeOp(a: OtOp, b: OtOp) {
-  if (a.operation === 'insert' && b.operation === 'delete') {
-    return a.position >= b.start && a.position <= b.end;
-  } else if (a.operation === 'delete' && b.operation === 'insert') {
-    return b.position >= a.start && b.position <= a.end;
-  }
-
-  return false;
 }
 
 function getWebviewContent(maxValue: number) {
