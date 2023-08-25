@@ -14,12 +14,6 @@ type DeleteOp = {
   end: number;
 }
 
-// type SelectOp = {
-//   operation: 'select';
-//   start: number;
-//   end: number;
-// }
-
 type OtOp = InsertOp | DeleteOp;
 
 export function activate(context: vscode.ExtensionContext) {
@@ -37,21 +31,6 @@ export function activate(context: vscode.ExtensionContext) {
     const otOps = changesToOT(changes);
     saveToOTFile(event.document, otOps);
   });
-
-  // vscode.window.onDidChangeTextEditorSelection((event) => {
-  //   const document = event.textEditor.document;
-  //   if (document.fileName.endsWith('.ot.json')) {
-  //     return;
-  //   }
-
-  //   const selection = event.selections[0];
-  //   const otOps: OtOp[] = [{
-  //     operation: 'select',
-  //     start: selection.start.character,
-  //     end: selection.end.character,
-  //   }];
-  //   saveToOTFile(document, otOps);
-  // });
 
   // A command to rebuild the file based on OT data. It will output a <file>.ot.<ext> file
   vscode.commands.registerCommand('vscode-ot.rebuild', () => {
