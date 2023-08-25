@@ -6,13 +6,13 @@ type InsertOp = {
   operation: 'insert';
   position: number;
   text: string;
-}
+};
 
 type DeleteOp = {
   operation: 'delete';
   start: number;
   end: number;
-}
+};
 
 type OtOp = InsertOp | DeleteOp;
 
@@ -22,6 +22,71 @@ export function activate(context: vscode.ExtensionContext) {
   // show info event
   vscode.window.showInformationMessage('VSCode OT is now active');
 
+  // TODO: When the file is changed, we need to update the HTML
+  let lastOpenDocument = vscode.window.activeTextEditor?.document;
+  // vscode.window.onDidChangeActiveTextEditor((editor) => {
+  //   if (!editor) {
+  //     return;
+  //   }
+
+  //   const document = editor.document;
+  //   if (document === lastOpenDocument) {
+  //     return;
+  //   }
+
+  //   lastOpenDocument = document;
+  //   const otOps = readOTFile(document);
+  //   panel.webview.html = getWebviewContent(otOps.length);
+  // });
+
+  // Create a Webview panel
+  const panel = vscode.window.createWebviewPanel(
+    'sliderPanel',
+    'Range Slider',
+    vscode.ViewColumn.Beside,
+    {
+      enableScripts: true, // Enable JavaScript in the Webview
+    }
+  );
+
+  const document = vscode.window.activeTextEditor?.document;
+  if (document) {
+    const otOps = readOTFile(document);
+    panel.webview.html = getWebviewContent(otOps.length);
+  }
+
+  // Handle messages from the Webview
+  panel.webview.onDidReceiveMessage((message) => {
+    if (message.type === 'sliderChange') {
+      const document =
+        vscode.window.activeTextEditor?.document ?? lastOpenDocument;
+      if (!document) {
+        vscode.window.showErrorMessage('No active document');
+        return;
+      }
+
+      console.log('Slider changed to ' + message.value);
+
+      const otOps = readOTFile(document);
+      const opsToApply = otOps.slice(0, message.value);
+      const text = buildOT(opsToApply);
+
+      // const newText = vscode.TextEdit.replace(
+      //   new vscode.Range(0, 0, document.lineCount, 0),
+      //   text
+      // );
+      // const edit = new vscode.WorkspaceEdit();
+      // edit.set(document.uri, [newText]);
+      // vscode.workspace.applyEdit(edit);
+
+      // Post a message back to the webview to tell the slider what the new content is
+      panel.webview.postMessage({
+        type: 'updateContent',
+        text: text,
+      });
+    }
+  });
+
   vscode.workspace.onDidChangeTextDocument((event) => {
     if (event.document.fileName.endsWith('.ot.json')) {
       return;
@@ -29,7 +94,13 @@ export function activate(context: vscode.ExtensionContext) {
 
     const changes = event.contentChanges;
     const otOps = changesToOT(changes);
-    saveToOTFile(event.document, otOps);
+
+    // After saving the operations, send a message to the webview to update the slider's max value
+    const maxOps = saveToOTFile(event.document, otOps);
+    panel.webview.postMessage({
+      type: 'updateMax',
+      maxValue: maxOps,
+    });
   });
 
   // A command to rebuild the file based on OT data. It will output a <file>.ot.<ext> file
@@ -61,9 +132,9 @@ export function activate(context: vscode.ExtensionContext) {
 
     const otPath = otFilePath(document);
     const insertOp: InsertOp = {
-      operation: "insert",
+      operation: 'insert',
       position: 0,
-      text: document.getText()
+      text: document.getText(),
     };
 
     if (!otPath) {
@@ -109,15 +180,18 @@ function changesToOT(
   return changes.flatMap((change) => {
     if (change.rangeLength > 0 && change.text.length > 0) {
       // If the change replaces text, we need to delete the old text and insert the new text
-      return [{
-        operation: 'delete',
-        start: change.range.start.character,
-        end: change.range.end.character,
-      }, {
-        operation: 'insert',
-        position: change.range.start.character,
-        text: change.text,
-      }];
+      return [
+        {
+          operation: 'delete',
+          start: change.range.start.character,
+          end: change.range.end.character,
+        },
+        {
+          operation: 'insert',
+          position: change.range.start.character,
+          text: change.text,
+        },
+      ];
     } else if (change.text.length === 0) {
       // If the change deletes text
       return {
@@ -136,7 +210,7 @@ function changesToOT(
   });
 }
 
-function saveToOTFile(document: vscode.TextDocument, ops: OtOp[]) {
+function saveToOTFile(document: vscode.TextDocument, ops: OtOp[]): number {
   const otPath = path.join(
     path.dirname(document.fileName),
     path.basename(document.fileName) + '.ot.json'
@@ -151,6 +225,7 @@ function saveToOTFile(document: vscode.TextDocument, ops: OtOp[]) {
   fs.writeFileSync(otPath, JSON.stringify(existingOps, null, 2));
 
   console.log('Saved to ' + otPath);
+  return existingOps.length;
 }
 
 function buildOT(ops: OtOp[]) {
@@ -177,4 +252,60 @@ function isOppositeOp(a: OtOp, b: OtOp) {
   }
 
   return false;
+}
+
+function getWebviewContent(maxValue: number) {
+  return `
+  <!DOCTYPE html>
+  <html>
+    <head>
+      <style>
+        /* Add your CSS styles here */
+      </style>
+    </head>
+    <body>
+      <input
+        type="range"
+        id="ot-slider"
+        min="0"
+        max="${maxValue}"
+        value="${maxValue}"
+      />
+      <span id="ot-value">${maxValue} / ${maxValue}</span>
+      <br />
+      <span id="ot-content"></span>
+      <script>
+        const maxValue = ${maxValue};
+        const slider = document.getElementById('ot-slider');
+        const content = document.getElementById('ot-content');
+        const vscode = acquireVsCodeApi();
+
+        slider.addEventListener('input', (event) => {
+          console.log('from webview: Slider changed to ' + event.target.value)
+
+          vscode.postMessage({
+            type: 'sliderChange',
+            value: parseInt(event.target.value),
+          });
+
+          const otValue = document.getElementById('ot-value');
+          otValue.innerText = slider.value + ' / ' + maxValue;
+        });
+
+        window.addEventListener('message', event => {
+          const message = event.data;
+          switch (message.type) {
+            case 'updateMax':
+              slider.max = message.maxValue;
+              const otValue = document.getElementById('ot-value');
+              otValue.innerText = slider.value + ' / ' + slider.max;
+              break;
+            case 'updateContent':
+              content.innerText = message.text;
+              break;
+          }
+        });
+      </script>
+    </body>
+  </html>`;
 }
