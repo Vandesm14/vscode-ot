@@ -16,8 +16,12 @@
   "contributes": {
     "commands": [
       {
-        "command": "vscode-ot.helloWorld",
-        "title": "Hello World"
+        "command": "vscode-ot.rebuild",
+        "title": "Rebuild via OT"
+      },
+      {
+        "command": "vscode-ot.clear",
+        "title": "Clear OT File"
       }
     ]
   },
