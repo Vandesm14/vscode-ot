@@ -16,12 +16,12 @@
   "contributes": {
     "commands": [
       {
-        "command": "vscode-ot.rebuild",
-        "title": "Rebuild via OT"
-      },
-      {
         "command": "vscode-ot.clear",
         "title": "Clear OT File"
+      },
+      {
+        "command": "vscode-ot.openSlider",
+        "title": "Show OT Slider"
       }
     ],
     "views": {

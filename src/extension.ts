@@ -24,7 +24,7 @@ export async function activate(context: vscode.ExtensionContext) {
     await vscode.workspace.fs.createDirectory(otFolder);
   }
 
-  // TODO: When the file is changed, we need to update the HTML
+  // When the file is changed, we need to update the HTML
   let lastOpenDocument = vscode.window.activeTextEditor?.document;
   vscode.window.onDidChangeActiveTextEditor((editor) => {
     if (!editor) {
@@ -40,19 +40,19 @@ export async function activate(context: vscode.ExtensionContext) {
     const otOps = readOTFile(document);
 
     // Post a message back to the webview to tell the slider what the new content is
-    panel.webview.postMessage({
+    panel?.webview.postMessage({
       type: 'updateContent',
       text: ot.buildOT(otOps),
     });
 
-    panel.webview.postMessage({
+    panel?.webview.postMessage({
       type: 'updateMax',
       maxValue: otOps.length,
     });
   });
 
   // Create a Webview panel
-  const panel = vscode.window.createWebviewPanel(
+  let panel: vscode.WebviewPanel | null = vscode.window.createWebviewPanel(
     'sliderPanel',
     'Range Slider',
     vscode.ViewColumn.Beside,
@@ -60,6 +60,40 @@ export async function activate(context: vscode.ExtensionContext) {
       enableScripts: true, // Enable JavaScript in the Webview
     }
   );
+
+  panel.onDidDispose(() => {
+    panel = null;
+  });
+
+  // Create or reopen the Webview panel
+  function createOrReopenPanel() {
+    console.log({ panel });
+
+    if (panel) {
+      // If the panel already exists, reveal it
+      panel.reveal(vscode.ViewColumn.Beside);
+    } else {
+      // Create a new panel
+      panel = vscode.window.createWebviewPanel(
+        'sliderPanel',
+        'Range Slider',
+        vscode.ViewColumn.Beside,
+        {
+          enableScripts: true,
+        }
+      );
+
+      const document = vscode.window.activeTextEditor?.document;
+      panel.webview.html = getWebviewContent(
+        document ? readOTFile(document).length : 0
+      );
+
+      // Dispose the panel when it's closed
+      panel.onDidDispose(() => {
+        panel = null;
+      });
+    }
+  }
 
   const document = vscode.window.activeTextEditor?.document;
   panel.webview.html = getWebviewContent(
@@ -80,16 +114,8 @@ export async function activate(context: vscode.ExtensionContext) {
       const opsToApply = otOps.slice(0, message.value);
       const text = ot.buildOT(opsToApply);
 
-      // const newText = vscode.TextEdit.replace(
-      //   new vscode.Range(0, 0, document.lineCount, 0),
-      //   text
-      // );
-      // const edit = new vscode.WorkspaceEdit();
-      // edit.set(document.uri, [newText]);
-      // vscode.workspace.applyEdit(edit);
-
       // Post a message back to the webview to tell the slider what the new content is
-      panel.webview.postMessage({
+      panel?.webview.postMessage({
         type: 'updateContent',
         text: text,
       });
@@ -106,29 +132,14 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // After saving the operations, send a message to the webview to update the slider's max value
     const maxOps = saveToOTFile(event.document, otOps);
-    panel.webview.postMessage({
+    panel?.webview.postMessage({
       type: 'updateMax',
       maxValue: maxOps,
     });
   });
 
-  // A command to rebuild the file based on OT data. It will output a <file>.ot.<ext> file
-  vscode.commands.registerCommand('vscode-ot.rebuild', () => {
-    const document = vscode.window.activeTextEditor?.document;
-    if (!document) {
-      vscode.window.showErrorMessage('No active document');
-      return;
-    }
-
-    const otOps = readOTFile(document);
-    const text = ot.buildOT(otOps);
-    const newText = vscode.TextEdit.replace(
-      new vscode.Range(0, 0, document.lineCount, 0),
-      text
-    );
-    const edit = new vscode.WorkspaceEdit();
-    edit.set(document.uri, [newText]);
-    vscode.workspace.applyEdit(edit);
+  vscode.commands.registerCommand('vscode-ot.openSlider', () => {
+    createOrReopenPanel();
   });
 
   // A command to clear the OT file
@@ -160,6 +171,16 @@ export async function activate(context: vscode.ExtensionContext) {
     const otPath = otFilePath(document);
     const existingOps = readOTFile(document);
 
+    if (existingOps.length === 0) {
+      // Prefill with file contents
+      const insertOp: ot.InsertOp = {
+        operation: 'insert',
+        position: 0,
+        text: document.getText(),
+      };
+      existingOps.push(insertOp);
+    }
+
     existingOps.push(...ops);
     fs.writeFileSync(otPath, JSON.stringify(existingOps, null, 2));
 
@@ -170,7 +191,7 @@ export async function activate(context: vscode.ExtensionContext) {
   function otFilePath(document: vscode.TextDocument): string {
     const otPath = path.join(
       otFolder.fsPath,
-      hash(document.fileName).toString() + '.ot.json'
+      encodeURIComponent(document.fileName).toString() + '.ot.json'
     );
 
     return otPath;
@@ -186,21 +207,6 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 }
 
-function hash(str: string) {
-  let hash = 0;
-  if (str.length === 0) {
-    return hash;
-  }
-
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-
-  return hash;
-}
-
 function getWebviewContent(maxValue: number, content: string = '') {
   return `
   <!DOCTYPE html>
@@ -214,11 +220,11 @@ function getWebviewContent(maxValue: number, content: string = '') {
       <input
         type="range"
         id="ot-slider"
-        min="0"
+        min="1"
         max="${maxValue}"
         value="${maxValue}"
       />
-      <span id="ot-value" value=${maxValue}>${maxValue} / ${maxValue}</span>
+      <span id="ot-value">${maxValue} / ${maxValue}</span>
       <br />
       <span id="ot-content">${content}</span>
       <script>
