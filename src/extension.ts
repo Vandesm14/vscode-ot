@@ -16,11 +16,26 @@ type DeleteOp = {
 
 type OtOp = InsertOp | DeleteOp;
 
-export function activate(context: vscode.ExtensionContext) {
-  console.log('Extension "vscode-ot" is now active!');
+export async function activate(context: vscode.ExtensionContext) {
+  const rootFolder = vscode.workspace.workspaceFolders;
+  if (!rootFolder) {
+    vscode.window.showErrorMessage(
+      'Boop REPL: No workspace folder found. Please open a folder first.'
+    );
+    return;
+  }
 
-  // show info event
-  vscode.window.showInformationMessage('VSCode OT is now active');
+  const rootUri = rootFolder[0].uri;
+  const otFolder = vscode.Uri.joinPath(rootUri, '.ot');
+
+  // check if .boop/ folder exists
+  try {
+    await vscode.workspace.fs.stat(otFolder);
+  } catch {
+    console.log('Creating .boop folder');
+
+    await vscode.workspace.fs.createDirectory(otFolder);
+  }
 
   // TODO: When the file is changed, we need to update the HTML
   let lastOpenDocument = vscode.window.activeTextEditor?.document;
@@ -64,8 +79,6 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage('No active document');
         return;
       }
-
-      console.log('Slider changed to ' + message.value);
 
       const otOps = readOTFile(document);
       const opsToApply = otOps.slice(0, message.value);
@@ -137,58 +150,80 @@ export function activate(context: vscode.ExtensionContext) {
       text: document.getText(),
     };
 
-    if (!otPath) {
-      return;
-    }
-
     // Prefill with file contents
     fs.writeFileSync(otPath, JSON.stringify([insertOp]));
     vscode.window.showInformationMessage('OT file cleared');
   });
-}
 
-function otFilePath(document: vscode.TextDocument): string | null {
-  let otPath = '';
-  if (document.fileName.endsWith('.ot.json')) {
-    otPath = document.fileName;
-  } else {
-    otPath = path.join(
-      path.dirname(document.fileName),
-      path.basename(document.fileName) + '.ot.json'
+  console.log('Extension "vscode-ot" is now active!');
+
+  // show info event
+  vscode.window.showInformationMessage('VSCode OT is now active');
+
+  function saveToOTFile(document: vscode.TextDocument, ops: OtOp[]): number {
+    const otPath = otFilePath(document);
+    const existingOps = readOTFile(document);
+
+    existingOps.push(...ops);
+    fs.writeFileSync(otPath, JSON.stringify(existingOps, null, 2));
+
+    console.log('Saved to ' + otPath);
+    return existingOps.length;
+  }
+
+  function otFilePath(document: vscode.TextDocument): string {
+    const otPath = path.join(
+      otFolder.fsPath,
+      hash(document.fileName).toString() + '.ot.json'
     );
-    if (!fs.existsSync(otPath)) {
-      vscode.window.showErrorMessage('No OT file found');
-      return null;
-    }
+
+    console.log({ otPath });
+
+    return otPath;
   }
 
-  return otPath;
+  function readOTFile(document: vscode.TextDocument): OtOp[] {
+    const otPath = otFilePath(document);
+    if (!fs.existsSync(otPath)) {
+      return [];
+    }
+
+    return JSON.parse(fs.readFileSync(otPath).toString()) as OtOp[];
+  }
 }
 
-function readOTFile(document: vscode.TextDocument): OtOp[] {
-  const otPath = otFilePath(document);
-  if (!otPath) {
-    return [];
+function hash(str: string) {
+  let hash = 0;
+  if (str.length === 0) {
+    return hash;
   }
 
-  return JSON.parse(fs.readFileSync(otPath).toString()) as OtOp[];
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+
+  return hash;
 }
 
 function changesToOT(
   changes: readonly vscode.TextDocumentContentChangeEvent[]
 ): OtOp[] {
   return changes.flatMap((change) => {
+    const offset = change.rangeOffset;
+    const endOffset = offset + change.rangeLength;
     if (change.rangeLength > 0 && change.text.length > 0) {
       // If the change replaces text, we need to delete the old text and insert the new text
       return [
         {
           operation: 'delete',
-          start: change.range.start.character,
-          end: change.range.end.character,
+          start: offset,
+          end: endOffset,
         },
         {
           operation: 'insert',
-          position: change.range.start.character,
+          position: offset,
           text: change.text,
         },
       ];
@@ -196,36 +231,18 @@ function changesToOT(
       // If the change deletes text
       return {
         operation: 'delete',
-        start: change.range.start.character,
-        end: change.range.end.character,
+        start: offset,
+        end: endOffset,
       };
     } else {
       // If the change inserts text
       return {
         operation: 'insert',
-        position: change.range.start.character,
+        position: offset,
         text: change.text,
       };
     }
   });
-}
-
-function saveToOTFile(document: vscode.TextDocument, ops: OtOp[]): number {
-  const otPath = path.join(
-    path.dirname(document.fileName),
-    path.basename(document.fileName) + '.ot.json'
-  );
-
-  let existingOps: OtOp[] = [];
-  if (fs.existsSync(otPath)) {
-    existingOps = JSON.parse(fs.readFileSync(otPath, 'utf-8'));
-  }
-
-  existingOps.push(...ops);
-  fs.writeFileSync(otPath, JSON.stringify(existingOps, null, 2));
-
-  console.log('Saved to ' + otPath);
-  return existingOps.length;
 }
 
 function buildOT(ops: OtOp[]) {
@@ -281,8 +298,6 @@ function getWebviewContent(maxValue: number) {
         const vscode = acquireVsCodeApi();
 
         slider.addEventListener('input', (event) => {
-          console.log('from webview: Slider changed to ' + event.target.value)
-
           vscode.postMessage({
             type: 'sliderChange',
             value: parseInt(event.target.value),
